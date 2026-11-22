@@ -1,24 +1,30 @@
-"""FastAPI 入口：釉面缺陷漏检复核服务。"""
+"""FastAPI 入口：釉面缺陷漏检复核与训练切片规划服务。"""
 from __future__ import annotations
 
 from fastapi import FastAPI
 
-from . import solver
+from . import slicer, solver
 from .models import (
+    LabeledBoxOut,
     MatchOut,
     MatchReportOut,
     ReviewRequest,
     ReviewResponse,
+    SliceOut,
+    SlicingRequest,
+    SlicingResponse,
     SuppressionOut,
 )
 
 app = FastAPI(
-    title="釉面缺陷漏检复核 API",
-    version="1.0.0",
+    title="釉面缺陷检测辅助 API",
+    version="1.1.0",
     description=(
-        "针对相邻釉面缺陷在 NMS 后只剩一个框的漏检问题："
-        "在抑制前预测框上重放贪心 NMS 与匹配，"
-        "搜索找回指定漏检真值所需的最少豁免框对。"
+        "两组能力：\n"
+        "1. 漏检复核：在 NMS 抑制前预测框上重放贪心 NMS 与匹配，"
+        "搜索找回指定漏检真值所需的最少豁免框对；\n"
+        "2. 训练切片规划：从候选裁框中选出满足标注规则的最少切片，"
+        "完整缺陷作为正样本、被裁断部分标为忽略区（不进背景样本）。"
     ),
 )
 
@@ -87,4 +93,50 @@ def review(req: ReviewRequest) -> ReviewResponse:
             if result.all_exempted is not None
             else None
         ),
+    )
+
+
+@app.post(
+    "/api/v1/training-slices",
+    response_model=SlicingResponse,
+    summary="训练切片规划：选出满足标注规则的最少切片（正样本框 + 忽略框）",
+)
+def plan_training_slices(req: SlicingRequest) -> SlicingResponse:
+    gts = [
+        slicer.SliceGroundTruth(id=g.id, box=tuple(g.box))
+        for g in req.ground_truths
+    ]
+    crops = [tuple(c) for c in req.candidate_crops]
+
+    result = slicer.plan_slices(
+        gts=gts,
+        crops=crops,
+        image_width=req.image_width,
+        image_height=req.image_height,
+    )
+
+    return SlicingResponse(
+        status=result.status,
+        selected_crop_indices=result.selected_indices,
+        selected_crops=[list(crops[i]) for i in result.selected_indices],
+        plan=[
+            SliceOut(
+                crop_index=sp.crop_index,
+                crop=list(sp.crop),
+                positive_boxes=[
+                    LabeledBoxOut(gt_id=gid, box=list(box))
+                    for gid, box in sp.positive_boxes
+                ],
+                ignore_boxes=[
+                    LabeledBoxOut(gt_id=gid, box=list(box))
+                    for gid, box in sp.ignore_boxes
+                ],
+            )
+            for sp in result.plan
+        ],
+        slice_count=len(result.selected_indices),
+        optimal_solution_count=result.optimal_solution_count,
+        uncovered_gt_ids=result.uncovered_gt_ids,
+        blocked_components=result.blocked_components,
+        explanation=result.explanation,
     )

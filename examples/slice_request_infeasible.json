@@ -1,0 +1,12 @@
+{
+  "image_width": 100,
+  "image_height": 100,
+  "ground_truths": [
+    {"id": 1, "box": [0, 0, 60, 60]},
+    {"id": 2, "box": [50, 50, 90, 90]}
+  ],
+  "candidate_crops": [
+    [0, 0, 70, 70],
+    [40, 40, 100, 100]
+  ]
+}
